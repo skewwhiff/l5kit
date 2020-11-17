@@ -14,6 +14,23 @@ from ..kinematic import Perturbation
 from ..rasterization import EGO_EXTENT_HEIGHT, EGO_EXTENT_LENGTH, EGO_EXTENT_WIDTH, Rasterizer, RenderContext
 from .slicing import get_future_slice, get_history_slice
 
+def get_nearest_agent_track_ids(agents: np.ndarray, av_agent: np.ndarray, this_agent: np.ndarray, max_agents: int, agent_dist_threshold: float) -> np.ndarray:
+    """
+    Returns upto `max_agents` agents apart from this agent, but icluding av_agent that are within `agent_dist_threshold`
+    
+    """
+    #add av agent too track_id = -1
+    track_ids = agents["track_id"]
+    track_ids = np.append(track_ids, -1) #-1 is to signify av_agent
+
+    centroids = agents["centroid"]
+    centroids = np.vstack((centroids, av_agent["ego_translation"][:2]))
+    
+    dists = np.linalg.norm(centroids - this_agent["centroid"], axis=1)
+    indices = dists.argsort()[:max_agents+1]
+    indices = indices[dists[indices]<=agent_dist_threshold]
+    nearest_agent_track_ids = track_ids[indices].tolist()
+    return nearest_agent_track_ids, indices
 
 def generate_agent_sample(
     state_index: int,
@@ -31,14 +48,17 @@ def generate_agent_sample(
     filter_agents_threshold: float,
     rasterizer: Optional[Rasterizer] = None,
     perturbation: Optional[Perturbation] = None,
+    agent_dist_threshold: Optional[float] = 20.,
+    max_agents: Optional[int] = 4,
+    lane_dist_threshold: Optional[float] = 17.,
+    lane_smooth_probability: Optional[float] = 0.8,
+    is_world_frame: Optional[bool] = False,
 ) -> dict:
     """Generates the inputs and targets to train a deep prediction model. A deep prediction model takes as input
     the state of the world (here: an image we will call the "raster"), and outputs where that agent will be some
     seconds into the future.
-
     This function has a lot of arguments and is intended for internal use, you should try to use higher level classes
     and partials that use this function.
-
     Args:
         state_index (int): The anchor frame index, i.e. the "current" timestep in the scene
         frames (np.ndarray): The scene frames array, can be numpy array or a zarr array
@@ -57,13 +77,12 @@ def generate_agent_sample(
         filter_agents_threshold (float): Value between 0 and 1 to use as cutoff value for agent filtering
         based on their probability of being a relevant agent
         rasterizer (Optional[Rasterizer]): Rasterizer of some sort that draws a map image
-        perturbation (Optional[Perturbation]): Object that perturbs the input and targets, used
-to train models that can recover from slight divergence from training set data
+        perturbation (Optional[Perturbation]): Object that perturbs the input and targets, used to train models that can recover from slight divergence from training set data
+        is_world_frame: (Optional[bool]): Is output in world frame? If true, outputs are in world frame. Else, outputs are in agent frame. Rest should be self explanatory. 
 
     Raises:
         ValueError: A ValueError is returned if the specified ``selected_track_id`` is not present in the scene
         or was filtered by applying the ``filter_agent_threshold`` probability filtering.
-
     Returns:
         dict: a dict object with the raster array, the future offset coordinates (meters),
         the future yaw angular offset, the future_availability as a binary mask
@@ -104,37 +123,47 @@ to train models that can recover from slight divergence from training set data
         agent_yaw_rad = rotation33_as_yaw(cur_frame["ego_rotation"])
         agent_extent_m = np.asarray((EGO_EXTENT_LENGTH, EGO_EXTENT_WIDTH, EGO_EXTENT_HEIGHT))
         selected_agent = None
+        nearest_agent_track_ids = None
     else:
         # this will raise IndexError if the agent is not in the frame or under agent-threshold
         # this is a strict error, we cannot recover from this situation
         try:
+            useful_agents = filter_agents_by_labels(cur_agents, filter_agents_threshold)
             agent = filter_agents_by_track_id(
-                filter_agents_by_labels(cur_agents, filter_agents_threshold), selected_track_id
+                useful_agents, selected_track_id
             )[0]
         except IndexError:
             raise ValueError(f" track_id {selected_track_id} not in frame or below threshold")
         agent_centroid_m = agent["centroid"]
         agent_yaw_rad = float(agent["yaw"])
         agent_extent_m = agent["extent"]
-        selected_agent = agent
+        selected_agent = agent 
+        nearest_agent_track_ids, nearest_agent_indices = get_nearest_agent_track_ids(useful_agents, cur_frame, selected_agent, max_agents, agent_dist_threshold)
 
-    input_im = (
-        None
-        if not rasterizer
-        else rasterizer.rasterize(history_frames, history_agents, history_tl_faces, selected_agent)
-    )
-
+    input_im = None 
+    #input_im = (
+    #    None
+    #    if not rasterizer
+    #    else rasterizer.rasterize(history_frames, history_agents, history_tl_faces, selected_agent)
+    #)
     world_from_agent = compute_agent_pose(agent_centroid_m, agent_yaw_rad)
     agent_from_world = np.linalg.inv(world_from_agent)
     raster_from_world = render_context.raster_from_world(agent_centroid_m, agent_yaw_rad)
 
+    transformer = agent_from_world if not is_world_frame else np.eye(agent_from_world.shape[0], agent_from_world.shape[1])
+    
+    lane_centerlines, lane_traffic_status, lane_probabilities, crosswalks = None, None, None, None
+    if hasattr(rasterizer, 'sem_rast'):
+        _, lane_centerlines, lane_traffic_status, lane_probabilities, crosswalks = rasterizer.sem_rast.get_raw_data(agent_centroid_m, history_tl_faces[0], lane_dist_threshold, transformer, lane_smooth_probability=lane_smooth_probability) 
+    
     future_positions_m, future_yaws_rad, future_availabilities = _create_targets_for_deep_prediction(
-        future_num_frames, future_frames, selected_track_id, future_agents, agent_from_world, agent_yaw_rad,
+        future_num_frames, future_frames, [selected_track_id] if selected_track_id else None, future_agents, transformer, agent_yaw_rad
     )
+    future_positions_m, future_yaws_rad, future_availabilities = future_positions_m[0], future_yaws_rad[0], future_availabilities[0] #sindhu NOTE: Only this agent's inputs are required for future.
 
     # history_num_frames + 1 because it also includes the current frame
     history_positions_m, history_yaws_rad, history_availabilities = _create_targets_for_deep_prediction(
-        history_num_frames + 1, history_frames, selected_track_id, history_agents, agent_from_world, agent_yaw_rad,
+        history_num_frames + 1, history_frames, nearest_agent_track_ids, history_agents, transformer, agent_yaw_rad
     )
 
     # compute estimated velocities by finite differentiatin on future positions
@@ -148,23 +177,32 @@ to train models that can recover from slight divergence from training set data
 
     # current position is included in history positions
     # [history_num_frames, 2]
-    history_positions_diff_m = np.diff(history_positions_m, axis=0)
+    history_positions_diff_m = [np.diff(hpos, axis=0) for hpos in history_positions_m]
     # [history_num_frames, 2]
-    history_vels_mps = np.float32(history_positions_diff_m / history_step_time)
+    history_vels_mps = [np.float32(hpos_diff_m / history_step_time) for hpos_diff_m in history_positions_diff_m]
 
     return {
         "image": input_im,
+        "lanes": lane_centerlines,
+        "lane_traffic_status": lane_traffic_status, 
+        "lane_probabilities": lane_probabilities,
+        "crosswalks": crosswalks, 
         "target_positions": future_positions_m,
         "target_yaws": future_yaws_rad,
         "target_velocities": future_vels_mps,
         "target_availabilities": future_availabilities,
-        "history_positions": history_positions_m,
-        "history_yaws": history_yaws_rad,
-        "history_velocities": history_vels_mps,
-        "history_availabilities": history_availabilities,
+        "history_positions": history_positions_m[0],
+        "history_yaws": history_yaws_rad[0],
+        "history_velocities": history_vels_mps[0],
+        "history_availabilities": history_availabilities[0],
+        "nearest_agents_relative_indices": nearest_agent_indices, #sindhu NOTE needed for to_rgb. Also index of av = -1.  
+        "other_agents_history_positions": history_positions_m[1:],
+        "other_agents_history_yaws": history_yaws_rad[1:],
+        "other_agents_history_velocities": history_vels_mps[1:],
+        "other_agents_history_availabilities": history_availabilities[1:],
         "world_to_image": raster_from_world,  # TODO deprecate
         "raster_from_agent": raster_from_world @ world_from_agent,
-        "raster_from_world": raster_from_world,
+        "raster_from_world": raster_from_world,        
         "agent_from_world": agent_from_world,
         "world_from_agent": world_from_agent,
         "centroid": agent_centroid_m,
@@ -173,11 +211,10 @@ to train models that can recover from slight divergence from training set data
         "extent": agent_extent_m,
     }
 
-
 def _create_targets_for_deep_prediction(
     num_frames: int,
     frames: np.ndarray,
-    selected_track_id: Optional[int],
+    selected_track_ids: Optional[List[int]],
     agents: List[np.ndarray],
     agent_from_world: np.ndarray,
     current_agent_yaw: float,
@@ -186,39 +223,45 @@ def _create_targets_for_deep_prediction(
     Internal function that creates the targets and availability masks for deep prediction-type models.
     The futures/history offset (in meters) are computed. When no info is available (e.g. agent not in frame)
     a 0 is set in the availability array (1 otherwise).
-
     Args:
         num_frames (int): number of offset we want in the future/history
         frames (np.ndarray): available frames. This may be less than num_frames
-        selected_track_id (Optional[int]): agent track_id or AV (None)
+        selected_track_ids (Optional[int]): agent track_id or AV (None)
         agents (List[np.ndarray]): list of agents arrays (same len of frames)
         agent_from_world (np.ndarray): local from world matrix
         current_agent_yaw (float): angle of the agent at timestep 0
-
     Returns:
         Tuple[np.ndarray, np.ndarray, np.ndarray]: position offsets, angle offsets, availabilities
-
     """
     # How much the coordinates differ from the current state in meters.
-    positions_m = np.zeros((num_frames, 2), dtype=np.float32)
-    yaws_rad = np.zeros((num_frames, 1), dtype=np.float32)
-    availabilities = np.zeros((num_frames,), dtype=np.float32)
+    positions_m = [np.zeros((num_frames, 2), dtype=np.float32) for _ in selected_track_ids] if selected_track_ids is not None else [np.zeros((num_frames, 2), dtype=np.float32)]
+    yaws_rad = [np.zeros((num_frames, 1), dtype=np.float32) for _ in selected_track_ids] if selected_track_ids is not None else [np.zeros((num_frames, 1), dtype=np.float32)]
+    availabilities = [np.zeros((num_frames,), dtype=np.float32) for _ in selected_track_ids] if selected_track_ids is not None else [np.zeros((num_frames,), dtype=np.float32)]
 
     for i, (frame, frame_agents) in enumerate(zip(frames, agents)):
-        if selected_track_id is None:
+        if selected_track_ids is None:
             agent_centroid_m = frame["ego_translation"][:2]
             agent_yaw_rad = rotation33_as_yaw(frame["ego_rotation"])
+            positions_m[0][i] = transform_point(agent_centroid_m, agent_from_world)
+            yaws_rad[0][i] = angular_distance(agent_yaw_rad, current_agent_yaw)
+            availabilities[0][i] = 1.0
         else:
-            # it's not guaranteed the target will be in every frame
-            try:
-                agent = filter_agents_by_track_id(frame_agents, selected_track_id)[0]
-                agent_centroid_m = agent["centroid"]
-                agent_yaw_rad = agent["yaw"]
-            except IndexError:
-                availabilities[i] = 0.0  # keep track of invalid futures/history
-                continue
+            for t_ix, f_track_id in enumerate(selected_track_ids):
+                # it's not guaranteed the target will be in every frame
+                filtered_agents = filter_agents_by_track_id(frame_agents, f_track_id)
+                if len(filtered_agents)>0:
+                    agent = filtered_agents[0]
+                    agent_centroid_m = agent["centroid"]
+                    agent_yaw_rad = agent["yaw"]
+                    #sindhu TODO: Send dist also?
+                    positions_m[t_ix][i] = transform_point(agent_centroid_m, agent_from_world)
+                    yaws_rad[t_ix][i] = angular_distance(agent_yaw_rad, current_agent_yaw)
+                    availabilities[t_ix][i] = 1.0
+                elif f_track_id == -1: #AV is in agent's radius
+                    agent_centroid_m = frame["ego_translation"][:2]
+                    agent_yaw_rad = rotation33_as_yaw(frame["ego_rotation"])
+                    positions_m[t_ix][i] = transform_point(agent_centroid_m, agent_from_world)
+                    yaws_rad[t_ix][i] = angular_distance(agent_yaw_rad, current_agent_yaw)
+                    availabilities[t_ix][i] = 1.0
 
-        positions_m[i] = transform_point(agent_centroid_m, agent_from_world)
-        yaws_rad[i] = angular_distance(agent_yaw_rad, current_agent_yaw)
-        availabilities[i] = 1.0
     return positions_m, yaws_rad, availabilities

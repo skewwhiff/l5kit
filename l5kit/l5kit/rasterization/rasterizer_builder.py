@@ -10,7 +10,7 @@ from .rasterizer import Rasterizer
 from .render_context import RenderContext
 from .sat_box_rasterizer import SatBoxRasterizer
 from .satellite_rasterizer import SatelliteRasterizer
-from .sem_box_rasterizer import SemBoxRasterizer
+from .sem_box_rasterizer import SemBoxRasterizer, SemBoxRasterizerWithRawData
 from .semantic_rasterizer import SemanticRasterizer
 from .stub_rasterizer import StubRasterizer
 
@@ -151,7 +151,7 @@ def build_rasterizer(cfg: dict, data_manager: DataManager) -> Rasterizer:
         else:
             return SatelliteRasterizer(render_context, sat_image, world_to_aerial)
 
-    elif map_type in ["py_semantic", "semantic_debug"]:
+    elif map_type in ["py_semantic", "semantic_debug", "py_semantic_with_raw"]:
         semantic_map_filepath = data_manager.require(raster_cfg["semantic_map_key"])
         try:
             dataset_meta = _load_metadata(dataset_meta_key, data_manager)
@@ -160,6 +160,10 @@ def build_rasterizer(cfg: dict, data_manager: DataManager) -> Rasterizer:
             world_to_ecef = get_hardcoded_world_to_ecef()
         if map_type == "py_semantic":
             return SemBoxRasterizer(
+                render_context, filter_agents_threshold, history_num_frames, semantic_map_filepath, world_to_ecef,
+            )
+        elif map_type == "py_semantic_with_raw":
+            return SemBoxRasterizerWithRawData(
                 render_context, filter_agents_threshold, history_num_frames, semantic_map_filepath, world_to_ecef,
             )
         else:

@@ -4,7 +4,6 @@ from functools import partial
 from typing import Optional
 
 import numpy as np
-from torch.utils.data import Dataset
 
 from ..data import (
     ChunkedDataset,
@@ -17,7 +16,7 @@ from ..rasterization import Rasterizer, RenderContext
 from ..sampling import generate_agent_sample
 
 
-class EgoDataset(Dataset):
+class EgoDataset:
     def __init__(
         self,
         cfg: dict,
@@ -61,6 +60,11 @@ None if not desired
             filter_agents_threshold=cfg["raster_params"]["filter_agents_threshold"],
             rasterizer=rasterizer,
             perturbation=perturbation,
+            agent_dist_threshold=cfg["preprocess_config"]["agent_dist_threshold"],
+            max_agents=cfg["preprocess_config"]["max_agents"],
+            lane_dist_threshold=cfg["preprocess_config"]["lane_dist_threshold"],
+            lane_smooth_probability=cfg["preprocess_config"]["lane_smooth_probability"],
+            is_world_frame=cfg["preprocess_config"]["is_world_frame"],
         )
 
     def __len__(self) -> int:

@@ -20,8 +20,6 @@ setup(
         "pymap3d",
         "scipy",
         "setuptools",
-        "torch>=1.5.0,<2.0.0",
-        "torchvision>=0.6.0,<1.0.0",
         "tqdm",
         "transforms3d",
         "zarr",

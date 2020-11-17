@@ -6,6 +6,7 @@ import pymap3d as pm
 
 from ..geometry import transform_points
 from .proto.road_network_pb2 import GeoFrame, GlobalId, MapElement, MapFragment
+from .centerline_utils import compute_midpoint_line
 
 CACHE_SIZE = int(1e5)
 ENCODING = "utf-8"
@@ -132,7 +133,8 @@ class MapAPI:
             lane.geo_frame,
         )
 
-        return {"xyz_left": xyz_left, "xyz_right": xyz_right}
+        xyz, lane_width = compute_midpoint_line(xyz_left, xyz_right) #sindhu: NOTE Hardcoded to 10.
+        return {"xyz": xyz, "xyz_left": xyz_left, "xyz_right": xyz_right} 
 
     @staticmethod
     @no_type_check

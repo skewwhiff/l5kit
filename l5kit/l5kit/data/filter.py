@@ -69,7 +69,6 @@ def filter_agents_by_track_id(agents: np.ndarray, track_id: int) -> np.ndarray:
     """
     return agents[np.nonzero(agents["track_id"] == track_id)[0]]
 
-
 def filter_agents_by_frames(frames: np.ndarray, agents: np.ndarray) -> List[np.ndarray]:
     """
     Get a list of agents array, one array per frame. Note that "agent_index_interval" is used to filter agents,

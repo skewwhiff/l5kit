@@ -5,7 +5,7 @@ from .render_context import RenderContext
 from .sat_box_rasterizer import SatBoxRasterizer
 from .satellite_image import get_sat_image_crop, get_sat_image_crop_scaled, get_sat_image_crop_scaled_from_ecef
 from .satellite_rasterizer import SatelliteRasterizer
-from .sem_box_rasterizer import SemBoxRasterizer
+from .sem_box_rasterizer import SemBoxRasterizer, SemBoxRasterizerWithRawData
 from .semantic_rasterizer import SemanticRasterizer
 from .stub_rasterizer import StubRasterizer
 
@@ -20,6 +20,7 @@ __all__ = [
     "StubRasterizer",
     "BoxRasterizer",
     "SatBoxRasterizer",
+    "SemBoxRasterizerWithRawData",
     "SemBoxRasterizer",
     "build_rasterizer",
     "EGO_EXTENT_WIDTH",
