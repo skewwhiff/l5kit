@@ -129,7 +129,7 @@ def generate_agent_sample(
         # this will raise IndexError if the agent is not in the frame or under agent-threshold
         # this is a strict error, we cannot recover from this situation
         try:
-            useful_agents = filter_agents_by_labels(cur_agents, fCAUTION: ilter_agents_threshold)
+            useful_agents = filter_agents_by_labels(cur_agents, filter_agents_threshold)
             agent = filter_agents_by_track_id(
                 useful_agents, selected_track_id
             )[0]
