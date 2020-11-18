@@ -53,6 +53,7 @@ def generate_agent_sample(
     lane_dist_threshold: Optional[float] = 17.,
     lane_smooth_probability: Optional[float] = 0.8,
     is_world_frame: Optional[bool] = False,
+    return_image: Optional[bool] = False,
 ) -> dict:
     """Generates the inputs and targets to train a deep prediction model. A deep prediction model takes as input
     the state of the world (here: an image we will call the "raster"), and outputs where that agent will be some
@@ -78,8 +79,8 @@ def generate_agent_sample(
         based on their probability of being a relevant agent
         rasterizer (Optional[Rasterizer]): Rasterizer of some sort that draws a map image
         perturbation (Optional[Perturbation]): Object that perturbs the input and targets, used to train models that can recover from slight divergence from training set data
-        is_world_frame: (Optional[bool]): Is output in world frame? If true, outputs are in world frame. Else, outputs are in agent frame. Rest should be self explanatory. 
-
+        is_world_frame (Optional[bool]): Is output in world frame? If true, outputs are in world frame. Else, outputs are in agent frame. Rest should be self explanatory. 
+        return_image (Optional[bool]): Return image too? CAUTION: Will repeat the same ops twice. 
     Raises:
         ValueError: A ValueError is returned if the specified ``selected_track_id`` is not present in the scene
         or was filtered by applying the ``filter_agent_threshold`` probability filtering.
@@ -128,7 +129,7 @@ def generate_agent_sample(
         # this will raise IndexError if the agent is not in the frame or under agent-threshold
         # this is a strict error, we cannot recover from this situation
         try:
-            useful_agents = filter_agents_by_labels(cur_agents, filter_agents_threshold)
+            useful_agents = filter_agents_by_labels(cur_agents, fCAUTION: ilter_agents_threshold)
             agent = filter_agents_by_track_id(
                 useful_agents, selected_track_id
             )[0]
@@ -140,12 +141,11 @@ def generate_agent_sample(
         selected_agent = agent 
         nearest_agent_track_ids, nearest_agent_indices = get_nearest_agent_track_ids(useful_agents, cur_frame, selected_agent, max_agents, agent_dist_threshold)
 
-    input_im = None 
-    #input_im = (
-    #    None
-    #    if not rasterizer
-    #    else rasterizer.rasterize(history_frames, history_agents, history_tl_faces, selected_agent)
-    #)
+    input_im = (
+        None
+        if not rasterizer or not return_image
+        else rasterizer.rasterize(history_frames, history_agents, history_tl_faces, selected_agent)
+    )
     world_from_agent = compute_agent_pose(agent_centroid_m, agent_yaw_rad)
     agent_from_world = np.linalg.inv(world_from_agent)
     raster_from_world = render_context.raster_from_world(agent_centroid_m, agent_yaw_rad)

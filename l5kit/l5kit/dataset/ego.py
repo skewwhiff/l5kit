@@ -65,6 +65,7 @@ None if not desired
             lane_dist_threshold=cfg["preprocess_config"]["lane_dist_threshold"],
             lane_smooth_probability=cfg["preprocess_config"]["lane_smooth_probability"],
             is_world_frame=cfg["preprocess_config"]["is_world_frame"],
+            return_image=cfg["preprocess_config"]["return_image"],
         )
 
     def __len__(self) -> int:
