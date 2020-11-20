@@ -10,7 +10,6 @@ from ..data import (
 )
 from ..data.filter import filter_agents_by_frames, filter_agents_by_track_id
 from ..geometry import angular_distance, compute_agent_pose, rotation33_as_yaw, transform_point
-from ..kinematic import Perturbation
 from ..rasterization import EGO_EXTENT_HEIGHT, EGO_EXTENT_LENGTH, EGO_EXTENT_WIDTH, Rasterizer, RenderContext
 from .slicing import get_future_slice, get_history_slice
 
@@ -47,11 +46,9 @@ def generate_agent_sample(
     future_step_time: float,
     filter_agents_threshold: float,
     rasterizer: Optional[Rasterizer] = None,
-    perturbation: Optional[Perturbation] = None,
     agent_dist_threshold: Optional[float] = 20.,
     max_agents: Optional[int] = 4,
     lane_dist_threshold: Optional[float] = 17.,
-    lane_smooth_probability: Optional[float] = 0.8,
     is_world_frame: Optional[bool] = False,
     return_image: Optional[bool] = False,
 ) -> dict:
@@ -78,7 +75,6 @@ def generate_agent_sample(
         filter_agents_threshold (float): Value between 0 and 1 to use as cutoff value for agent filtering
         based on their probability of being a relevant agent
         rasterizer (Optional[Rasterizer]): Rasterizer of some sort that draws a map image
-        perturbation (Optional[Perturbation]): Object that perturbs the input and targets, used to train models that can recover from slight divergence from training set data
         is_world_frame (Optional[bool]): Is output in world frame? If true, outputs are in world frame. Else, outputs are in agent frame. Rest should be self explanatory. 
         return_image (Optional[bool]): Return image too? CAUTION: Will repeat the same ops twice. 
     Raises:
@@ -109,11 +105,6 @@ def generate_agent_sample(
     # sync interval with the traffic light faces array
     history_frames["traffic_light_faces_index_interval"] -= tl_slice.start
     history_tl_faces = filter_tl_faces_by_frames(history_frames, tl_faces[tl_slice].copy())
-
-    if perturbation is not None:
-        history_frames, future_frames = perturbation.perturb(
-            history_frames=history_frames, future_frames=future_frames
-        )
 
     # State you want to predict the future of.
     cur_frame = history_frames[0]
@@ -154,7 +145,7 @@ def generate_agent_sample(
     
     lane_centerlines, lane_traffic_status, lane_probabilities, crosswalks = None, None, None, None
     if hasattr(rasterizer, 'sem_rast'):
-        _, lane_centerlines, lane_traffic_status, lane_probabilities, crosswalks = rasterizer.sem_rast.get_raw_data(agent_centroid_m, history_tl_faces[0], lane_dist_threshold, transformer, lane_smooth_probability=lane_smooth_probability) 
+        _, lane_centerlines, lane_traffic_status, lane_probabilities, crosswalks = rasterizer.sem_rast.get_raw_data(agent_centroid_m, history_tl_faces[0], lane_dist_threshold, transformer) 
     
     future_positions_m, future_yaws_rad, future_availabilities = _create_targets_for_deep_prediction(
         future_num_frames, future_frames, [selected_track_id] if selected_track_id else None, future_agents, transformer, agent_yaw_rad

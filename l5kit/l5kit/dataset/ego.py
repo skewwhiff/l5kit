@@ -11,7 +11,6 @@ from ..data import (
     get_frames_slice_from_scenes,
     get_tl_faces_slice_from_frames,
 )
-from ..kinematic import Perturbation
 from ..rasterization import Rasterizer, RenderContext
 from ..sampling import generate_agent_sample
 
@@ -22,7 +21,6 @@ class EgoDataset:
         cfg: dict,
         zarr_dataset: ChunkedDataset,
         rasterizer: Rasterizer,
-        perturbation: Optional[Perturbation] = None,
     ):
         """
         Get a PyTorch dataset object that can be used to train DNN
@@ -31,10 +29,7 @@ class EgoDataset:
             cfg (dict): configuration file
             zarr_dataset (ChunkedDataset): the raw zarr dataset
             rasterizer (Rasterizer): an object that support rasterisation around an agent (AV or not)
-            perturbation (Optional[Perturbation]): an object that takes care of applying trajectory perturbations.
-None if not desired
         """
-        self.perturbation = perturbation
         self.cfg = cfg
         self.dataset = zarr_dataset
         self.rasterizer = rasterizer
@@ -59,11 +54,9 @@ None if not desired
             future_step_time=cfg["model_params"]["future_delta_time"] * cfg["model_params"]["future_step_size"],
             filter_agents_threshold=cfg["raster_params"]["filter_agents_threshold"],
             rasterizer=rasterizer,
-            perturbation=perturbation,
             agent_dist_threshold=cfg["preprocess_config"]["agent_dist_threshold"],
             max_agents=cfg["preprocess_config"]["max_agents"],
             lane_dist_threshold=cfg["preprocess_config"]["lane_dist_threshold"],
-            lane_smooth_probability=cfg["preprocess_config"]["lane_smooth_probability"],
             is_world_frame=cfg["preprocess_config"]["is_world_frame"],
             return_image=cfg["preprocess_config"]["return_image"],
         )
@@ -174,7 +167,7 @@ None if not desired
         dataset.frames = frames
         dataset.scenes = scenes
 
-        return EgoDataset(self.cfg, dataset, self.rasterizer, self.perturbation)
+        return EgoDataset(self.cfg, dataset, self.rasterizer)
 
     def get_scene_indices(self, scene_idx: int) -> np.ndarray:
         """

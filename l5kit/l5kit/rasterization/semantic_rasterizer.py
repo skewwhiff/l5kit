@@ -36,7 +36,6 @@ def elements_within_bounds(center: np.ndarray, bounds: np.ndarray, half_extent: 
     y_max_in = y_center <= bounds[:, 1, 1] + half_extent
     return np.nonzero(x_min_in & y_min_in & x_max_in & y_max_in)[0]
 
-
 def cv2_subpixel(coords: np.ndarray) -> np.ndarray:
     """
     Cast coordinates to numpy.int but keep fractional part by previously multiplying by 2**CV2_SHIFT
@@ -72,6 +71,43 @@ class SemanticRasterizer(Rasterizer):
 
         self.bounds_info = self.get_bounds()
 
+
+    def get_lane_and_tle_info(self, lane_id):
+        dct = {'lane_id': lane_id, 'lanes_ahead': [x.id.decode('utf-8') for x in self.proto_API[lane_id].element.lane.lanes_ahead if x.id.decode('utf-8') != '']}
+        #dct['tle_ids'] = [x.id.decode('utf-8') for x in self.proto_API[lane_id].element.lane.traffic_controls]
+        return dct
+    
+    
+    def get_left_and_right_lanes(self, lane_id):
+        left_lane_ids = []
+        cur_left_lane_id = self.proto_API[lane_id].element.lane.adjacent_lane_change_left.id.decode('utf-8')
+        while cur_left_lane_id != '':
+            left_lane_ids.append(cur_left_lane_id)
+            cur_left_lane_id = self.proto_API[cur_left_lane_id].element.lane.adjacent_lane_change_left.id.decode('utf-8')
+        right_lane_ids = []
+        cur_right_lane_id = self.proto_API[lane_id].element.lane.adjacent_lane_change_right.id.decode('utf-8')
+        while cur_right_lane_id != '':
+            right_lane_ids.append(cur_right_lane_id)
+            cur_right_lane_id = self.proto_API[cur_right_lane_id].element.lane.adjacent_lane_change_right.id.decode('utf-8')
+        return left_lane_ids, right_lane_ids
+    
+    
+    def get_lane_static_elements(self, lane_id):
+        filtered_lanes = {'lane_main': list(map(self.get_lane_and_tle_info, [lane_id]))}
+        left_lane_ids, right_lane_ids = self.get_left_and_right_lanes(lane_id)
+        filtered_lanes['lanes_left'] = list(map(self.get_lane_and_tle_info, left_lane_ids))
+        filtered_lanes['lanes_right'] = list(map(self.get_lane_and_tle_info, right_lane_ids))
+        return filtered_lanes
+    
+    def get_nearby_lanes(self, lane_id):
+        all_lanes_around = self.get_lane_static_elements(lane_id)
+        nearby_lanes = []
+        for k in ['lane_main', 'lanes_right', 'lanes_left']:
+            for ls in all_lanes_around[k]:
+                nearby_lanes.append(ls["lane_id"])
+                nearby_lanes += ls["lanes_ahead"]
+        return nearby_lanes
+    
     # TODO is this the right place for this function?
     def get_bounds(self) -> dict:
         """
@@ -142,7 +178,7 @@ class SemanticRasterizer(Rasterizer):
         return sem_im.astype(np.float32) / 255
 
     def get_raw_data(
-            self, center_in_world: np.ndarray, tl_faces: np.ndarray, raster_radius: float, transformer_matrix: np.ndarray, lane_smooth_probability: Optional[float]=None
+            self, center_in_world: np.ndarray, tl_faces: np.ndarray, raster_radius: float, transformer_matrix: np.ndarray
     ) -> Tuple[List[str], List[np.ndarray], List[str], List[float], List[np.ndarray]]:
         """Renders raw data in world coordinates
 
@@ -155,8 +191,10 @@ class SemanticRasterizer(Rasterizer):
             Tuple[List[np.ndarray], List[np.ndarray]]: Lane raw data, crosswalks raw data with smoothed probabilities if lane_smooth_probabilities is not none
         """
         active_tl_ids = set(filter_tl_faces_by_status(tl_faces, "ACTIVE")["face_id"].tolist())
-        nearby_lane_indices = elements_within_bounds(center_in_world, self.bounds_info["lanes"]["bounds"], raster_radius)
         candidate_lane_indices = elements_within_bounds(center_in_world, self.bounds_info["lanes"]["bounds"], 0)
+        candidate_lane_ids = list(map(lambda ix: self.bounds_info["lanes"]["ids"][ix], candidate_lane_indices))
+        nearby_lane_ids = list(map(self.get_nearby_lanes, candidate_lane_ids))
+        nearby_lane_ids = [lid for lids in nearby_lane_ids for lid in lids]
         
         #1. candidate_lane_indices shape = 0, nearby_lane_indices shape > 0, lane probabilities of all lanes = 1/nearby lane indices shape
         #2. candidate lane indices shape =0, nearby lane indices shape = 0, list is empty
@@ -167,8 +205,7 @@ class SemanticRasterizer(Rasterizer):
         lane_cls = list()
         lane_traffic_types = list()
         lane_probabilities = list()
-        for idx in nearby_lane_indices:
-            lane_id = self.bounds_info["lanes"]["ids"][idx]
+        for lane_id in nearby_lane_ids:
             lane_ids.append(lane_id)
             lane = self.proto_API[lane_id].element.lane
 
@@ -191,13 +228,7 @@ class SemanticRasterizer(Rasterizer):
             lane_traffic_types.append(lane_type)
 
             #lane probability
-            lane_probability = 0.0
-            if lane_smooth_probability:
-                #sindhu NOTE: No need of denominator 0 checks if we are looping through one at a time. 
-                if idx in candidate_lane_indices:
-                    lane_probability = lane_smooth_probability/candidate_lane_indices.shape[0]
-                else:
-                    lane_probability = (1-lane_smooth_probability)/(nearby_lane_indices.shape[0]-candidate_lane_indices.shape[0])
+            lane_probability = 1.0 if lane_id in candidate_lane_ids else 0.
             lane_probabilities.append(lane_probability)
 
         crosswalks = []
@@ -228,7 +259,7 @@ class SemanticRasterizer(Rasterizer):
         raster_radius = float(np.linalg.norm(self.raster_size * self.pixel_size)) / 2
 
         # get raw data
-        lane_ids, lane_cls, lane_traffic_types, lane_probabilities, crosswalks = self.get_raw_data(center_in_world, tl_faces, raster_radius, raster_from_world, 1.)
+        lane_ids, lane_cls, lane_traffic_types, lane_probabilities, crosswalks = self.get_raw_data(center_in_world, tl_faces, raster_radius, raster_from_world)
 
         # plot lanes
         lanes_lines = defaultdict(list)

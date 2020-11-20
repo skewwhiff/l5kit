@@ -7,7 +7,6 @@ import numpy as np
 from zarr import convenience
 
 from ..data import ChunkedDataset, get_agents_slice_from_frames, get_frames_slice_from_scenes
-from ..kinematic import Perturbation
 from ..rasterization import Rasterizer
 from .ego import EgoDataset
 from .select_agents import TH_DISTANCE_AV, TH_EXTENT_RATIO, TH_YAW_DEGREE, select_agents
@@ -23,14 +22,12 @@ class AgentDataset(EgoDataset):
         cfg: dict,
         zarr_dataset: ChunkedDataset,
         rasterizer: Rasterizer,
-        perturbation: Optional[Perturbation] = None,
         agents_mask: Optional[np.ndarray] = None,
         min_frame_history: int = MIN_FRAME_HISTORY,
         min_frame_future: int = MIN_FRAME_FUTURE,
     ):
-        assert perturbation is None, "AgentDataset does not support perturbation (yet)"
 
-        super(AgentDataset, self).__init__(cfg, zarr_dataset, rasterizer, perturbation)
+        super(AgentDataset, self).__init__(cfg, zarr_dataset, rasterizer)
         if agents_mask is None:  # if not provided try to load it from the zarr
             agents_mask = self.load_agents_mask()
             past_mask = agents_mask[:, 0] >= min_frame_history
@@ -136,7 +133,7 @@ class AgentDataset(EgoDataset):
         agents_mask = self.agents_mask[start_index:end_index].copy()
 
         return AgentDataset(
-            self.cfg, new_dataset, self.rasterizer, self.perturbation, agents_mask  # overwrite the loaded one
+            self.cfg, new_dataset, self.rasterizer, agents_mask  # overwrite the loaded one
         )
 
     def get_scene_indices(self, scene_idx: int) -> np.ndarray:
